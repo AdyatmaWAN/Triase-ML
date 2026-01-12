@@ -11,6 +11,8 @@ from sklearn.linear_model import Lasso
 from sklearn.preprocessing import StandardScaler
 from sklearn.ensemble import RandomForestClassifier
 
+import re
+
 try:
     from xgboost import XGBClassifier
 except Exception:  # pragma: no cover

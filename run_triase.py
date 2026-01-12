@@ -58,7 +58,7 @@ def parse_args() -> argparse.Namespace:
         "--feature_method",
         default="none",
         choices=["none", "xgb_gain", "rf_importance", "lgbm_importance", "lasso_coef",
-                 "mutual_info", "chi2", "rfe_rf", "sfs_rf"],
+                 "mutual_info", "chi2", "rfe_rf", "sfs_rf", "manual"],
         help="Feature selection / importance method.",
     )
     p.add_argument("--top_n", type=int, default=20, help="Top-N features to keep (when applicable).")
