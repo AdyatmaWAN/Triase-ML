@@ -71,7 +71,7 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help=(
             "Optional JSON file containing per-model param grids. "
-            "Format: {"rf": {"n_estimators": [200,500]}, "svm_rbf": {"C": [1,10]}}"
+            'Format: {"rf": {"n_estimators": [200,500]}, "svm_rbf": {"C": [1,10]}}'
         ),
     )
 

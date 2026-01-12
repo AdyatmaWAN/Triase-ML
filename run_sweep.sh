@@ -34,6 +34,7 @@ for task in "${TASKS[@]}"; do
         --tune
         --k_grid "${KGRID}"
         --tune_metric macro_f1
+        --param_grid param_grid.json
         --out "${out_dir}"
       )
 

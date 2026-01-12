@@ -26,6 +26,7 @@ foreach ($task in $TASKS) {
         "--tune",
         "--k_grid", $KGRID,
         "--tune_metric", "macro_f1",
+        "--param_grid_json", "param_grid.json",
         "--out", $outDir
       )
 
