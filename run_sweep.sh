@@ -6,7 +6,7 @@ OUT_ROOT="outputs/sweep_all"
 NSPLITS=10
 
 TASKS=("diagnosis" "handling_no_diag" "handling_with_diag" "pipeline_diag_then_handling")
-SELECTORS=("none" "xgb_gain" "rf_importance" "lgbm_importance" "lasso_coef" "mutual_info" "chi2" "rfe_rf" "sfs_rf")
+SELECTORS=("none" "xgb_gain" "rf_importance" "lgbm_importance" "lasso_coef" "mutual_info" "chi2" "rfe_rf" "sfs_rf" "manual")
 
 # Eliminate modes:
 # 1) no eliminate

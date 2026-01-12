@@ -27,6 +27,92 @@ class FeatureSelectionResult:
     selected_features: List[str]
     importance: Optional[pd.Series] = None  # index=feature, value=importance (if available)
 
+def _normalize(s: str) -> str:
+    s = s.lower().strip()
+    s = re.sub(r"\s+", " ", s)
+    return s
+
+def _match_columns_by_keywords(columns: Sequence[str], keywords: Sequence[str]) -> List[str]:
+    """
+    Match columns where normalized column name contains any normalized keyword.
+    """
+    cols_norm = [(_normalize(c), c) for c in columns]
+    keys_norm = [_normalize(k) for k in keywords]
+
+    selected = []
+    for cn, orig in cols_norm:
+        for k in keys_norm:
+            if k in cn:
+                selected.append(orig)
+                break
+    # unique, preserve original order
+    seen = set()
+    out = []
+    for c in selected:
+        if c not in seen:
+            out.append(c)
+            seen.add(c)
+    return out
+
+
+def Manual_Extraction(X_train: pd.DataFrame, y_train=None) -> FeatureSelectionResult:
+    """
+    Domain-expert manual feature selection.
+    Uses keyword-based matching so it survives minor column naming differences.
+    """
+    # Keywords sesuai daftar Anda (boleh Anda tambah/ubah)
+    keywords = [
+        "nyeri dada",
+        "nyeri perut",
+        "onset",
+        "tekanan darah sistolik",
+        "trop",              # menangkap 'Troponin T', 'Troponin'
+        "ste",
+        "non-ste",           # variasi penulisan
+        "std",               # bagian dari Non-STE (STD)
+        "stn",               # bagian dari Non-STE (STN)
+        "riw. sindrom koroner akut",
+        "riwayat sindrom koroner akut",
+        "hipertensi",
+        "dislipidemia",
+        "riw. serangan jantung",
+        "riwayat serangan jantung",
+        "egfr",
+        "imt",               # BMI sering disebut IMT
+        "bmi",
+        "berat badan",
+        "usia",
+        "gender",            # nanti akan difilter lagi untuk (L) jika ada
+        "laki",              # opsional
+        "skor vas",
+        "vas"
+    ]
+
+    selected = _match_columns_by_keywords(X_train.columns, keywords)
+
+    # Prefer kolom gender laki-laki jika one-hot
+    # Contoh: "Gender (L)" atau "Gender_L" atau "Jenis Kelamin_L"
+    gender_candidates = _match_columns_by_keywords(
+        X_train.columns,
+        ["gender (l)", "gender_l", "gender laki", "jenis kelamin (l)", "jenis kelamin_l", "laki-laki", "laki laki"]
+    )
+    if gender_candidates:
+        # jika ada kandidat spesifik (L), tambahkan dan buang kandidat gender generik
+        selected = [c for c in selected if "gender" not in _normalize(c) and "jenis kelamin" not in _normalize(c)]
+        for c in gender_candidates:
+            if c not in selected:
+                selected.append(c)
+
+    # Jika tidak ada yang match (nama kolom berbeda jauh), fallback: gunakan semua (biar tidak crash)
+    if len(selected) == 0:
+        selected = list(X_train.columns)
+
+    # importance opsional: set uniform 1.0 untuk plotting bar sederhana (optional)
+    importance = pd.Series(1.0, index=selected)
+
+    return FeatureSelectionResult(selected_features=selected, importance=importance)
+
+
 
 def select_features(
     method: str,
@@ -38,6 +124,16 @@ def select_features(
     method = (method or "none").lower()
     if method == "none":
         return FeatureSelectionResult(selected_features=list(X_train.columns), importance=None)
+
+    if method in {"manual", "domain", "domain_expert", "manual_extraction"}:
+        # manual selector tidak perlu top_n (tetap dipakai kalau Anda ingin ambil subset)
+        res = Manual_Extraction(X_train, y_train)
+        # jika user set top_n_features dan ingin membatasi
+        if top_n is not None and top_n > 0 and top_n < len(res.selected_features):
+            res.selected_features = res.selected_features[:top_n]
+            if res.importance is not None:
+                res.importance = res.importance.loc[res.selected_features]
+        return res
 
     if method == "mutual_info":
         mi = mutual_info_classif(X_train, y_train.values.ravel(), random_state=random_seed)
