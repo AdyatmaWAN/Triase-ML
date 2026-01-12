@@ -25,6 +25,13 @@ def _json_default(o):
         return float(o)
     return str(o)
 
+import warnings
+from sklearn.exceptions import DataConversionWarning
+
+warnings.filterwarnings(
+    "ignore",
+    message="X has feature names, but.*"
+)
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Triase ML runner (modular).")
