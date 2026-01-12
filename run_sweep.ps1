@@ -1,0 +1,43 @@
+$EXCEL   = "Triase_cleaned.xlsx"
+$OUTROOT = "outputs\sweep_all"
+$NSPLITS = 10
+
+$TASKS = @("diagnosis","handling_no_diag","handling_with_diag","pipeline_diag_then_handling")
+$SELECTORS = @("none","xgb_gain","rf_importance","lgbm_importance","lasso_coef","mutual_info","chi2","rfe_rf","sfs_rf")
+$ELIMMODES = @("none","median","mean")
+
+$KGRID = "0.3,0.5,0.7"
+
+foreach ($task in $TASKS) {
+  foreach ($sel in $SELECTORS) {
+    foreach ($emode in $ELIMMODES) {
+
+      $outDir = Join-Path $OUTROOT (Join-Path $task (Join-Path ("selector_" + $sel) ("elim_" + $emode)))
+      New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+
+      $baseArgs = @(
+        "run_triase.py",
+        "--excel", $EXCEL,
+        "--task", $task,
+        "--models", "all",
+        "--feature_method", $sel,
+        "--cv", "stratified_kfold",
+        "--n_splits", $NSPLITS,
+        "--tune",
+        "--k_grid", $KGRID,
+        "--tune_metric", "macro_f1",
+        "--out", $outDir
+      )
+
+      if ($emode -eq "none") {
+        Write-Host "RUN: task=$task sel=$sel elim=none"
+        python @baseArgs
+      } else {
+        Write-Host "RUN: task=$task sel=$sel elim=$emode"
+        python @baseArgs --eliminate --agg $emode
+      }
+    }
+  }
+}
+
+Write-Host "DONE. Outputs in: $OUTROOT"
