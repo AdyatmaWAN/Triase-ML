@@ -193,6 +193,8 @@ def run_experiment(cfg: ExperimentConfig) -> Dict[str, object]:
             if cfg.task == "pipeline_diag_then_handling":
                 # stage 1: diagnosis model predicts diagnosis for train/test, then stage 2 predicts handling
                 stage1_model = build_models([model_name], seed=cfg.data.random_seed)[model_name]
+                # FIX: apply tuned parameters from the main loop model
+                stage1_model.set_params(**model.get_params())
                 stage1_model.fit(X_tr_np, y_tr_np)
                 yhat_tr = stage1_model.predict(X_tr_np)
                 yhat_te = stage1_model.predict(X_te_np)
@@ -201,7 +203,7 @@ def run_experiment(cfg: ExperimentConfig) -> Dict[str, object]:
                 X2_tr_full = X_stage2.iloc[tr_idx].copy()
                 X2_te_full = X_stage2.iloc[te_idx].copy()
 
-                diag_prefix = "Diagnosa Penyakit jantung pasien  (text) _"
+                diag_prefix = "diag_text_"
                 diag_cols = [c for c in X2_tr_full.columns if c.startswith(diag_prefix)]
 
                 for df_part, yhat in [(X2_tr_full, yhat_tr), (X2_te_full, yhat_te)]:
@@ -247,6 +249,8 @@ def run_experiment(cfg: ExperimentConfig) -> Dict[str, object]:
                 X2_te_np = scaler2.transform(X2_te_np)
 
                 stage2_model = build_models([model_name], seed=cfg.data.random_seed)[model_name]
+                # FIX: apply tuned parameters here as well
+                stage2_model.set_params(**model.get_params())
                 y_pred, y_proba = _fit_predict_model(stage2_model, X2_tr_np, y2_tr_np, X2_te_np)
 
                 fr = compute_metrics(y2_te, y_pred, y_proba=y_proba)
@@ -354,8 +358,19 @@ def run_experiment(cfg: ExperimentConfig) -> Dict[str, object]:
 
         for model_name in models.keys():
             try:
-                # Build fresh model instance (jangan pakai object yg sudah terfit/termutasi)
+                # Build fresh model instance but COPY params from the tuned model
+                # We can grab the tuned model from the last fold of the loop (not ideal but works if params are constant)
+                # OR better: use the 'models[model_name]' which we updated in-place with best_params earlier
+                # in the loop: "model.set_params(**tuned_params)"
+                
+                # However, 'models[model_name]' might have been fitted/altered. 
+                # Ideally we want a fresh instance with the same params.
+                
+                base_model = models[model_name] # This object has the tuned params set via set_params()
+                current_params = base_model.get_params()
+                
                 m = build_models([model_name], seed=cfg.data.random_seed)[model_name]
+                m.set_params(**current_params)
 
                 X_tr = X.iloc[tr_idx].copy()
                 X_te = X.iloc[te_idx].copy()

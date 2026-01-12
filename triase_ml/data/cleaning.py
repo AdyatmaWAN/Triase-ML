@@ -7,31 +7,31 @@ import numpy as np
 import pandas as pd
 
 
-CAT_COL_COLOR = "hijau/kuning/ merah/ hitam"
-CAT_COL_GCS = "Glasgow coma scale "
-CAT_COL_CONDITION = "Keadaan umum pasien "
-CAT_COL_CONSCIOUS = "Kesadaran pasien "
-CAT_COL_EKG = "EKG (STE (st-elevasi). STD (ST depresi). STN (ST normal))"
-CAT_COL_DIAG = "Diagnosa Penyakit jantung pasien  (text) "
+CAT_COL_COLOR = "triage_color"
+CAT_COL_GCS = "gcs"
+CAT_COL_CONDITION = "general_condition"
+CAT_COL_CONSCIOUS = "consciousness"
+CAT_COL_EKG = "ecg_st"
+CAT_COL_DIAG = "diag_text"
 
 DROP_COLS_COMMON = [
-    "Early Warning system (EWS)",
-    "Saturasi Oksigen ",
-    "Pengobatan lengkap ",
-    "Troponin I(ng/mL)",
-    "CKMB (ng/mL)",
-    "no",
-    "Tanggal masuk ICCU",
-    "nomor rekam medis ",
-    "Deskripsi EKG",
-    "Diagnosa Akhir Pasien (text) ",
-    "Primary PCI (<60 menit)",
-    "Elective PCI",
-    "CABG CITO",
-    "CABG Elective",
+    "ews",
+    "oxygen_sat",
+    "medication",
+    "trop_i",
+    "ckmb",
+    "id",
+    "date_iccu",
+    "mrn",
+    "ecg_desc",
+    "final_diag_text",
+    "primary_pci",
+    "elective_pci",
+    "cabg_cito",
+    "cabg_elective",
 ]
 
-HANDLING_COLS = ["Primary PCI (<60 menit)", "Elective PCI"]
+HANDLING_COLS = ["primary_pci", "elective_pci"]
 
 
 @dataclass(frozen=True)
@@ -74,10 +74,10 @@ def _normalize_categoricals(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _derive_handling_target(df: pd.DataFrame) -> pd.Series:
-    # 1 = Primary PCI (<60 menit), 2 = Elective PCI, 0 = none
+    # 1 = primary_pci, 2 = elective_pci, 0 = none
     handling = df.apply(
-        lambda row: 1 if row.get("Primary PCI (<60 menit)", 0) == 1
-        else 2 if row.get("Elective PCI", 0) == 1
+        lambda row: 1 if row.get("primary_pci", 0) == 1
+        else 2 if row.get("elective_pci", 0) == 1
         else 0,
         axis=1,
     )

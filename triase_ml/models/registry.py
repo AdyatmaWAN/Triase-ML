@@ -84,7 +84,7 @@ def build_ensemble_models(base_models: Dict[str, object], seed: int = 42) -> Dic
     ensembles: Dict[str, object] = {}
     if len(est_list) >= 2:
         # voting hard is OK; for ROC you need predict_proba, but we already handle probas as optional
-        ensembles["voting"] = VotingClassifier(estimators=est_list, voting="hard", n_jobs=-1)
+        ensembles["voting"] = VotingClassifier(estimators=est_list, voting="soft", n_jobs=-1)
         ensembles["stacking"] = StackingClassifier(
             estimators=est_list,
             final_estimator=LogisticRegression(max_iter=2000, random_state=seed, n_jobs=-1),

@@ -33,6 +33,8 @@ warnings.filterwarnings(
     message="X has feature names, but.*"
 )
 
+warnings.filterwarnings("ignore", category=UserWarning, module="sklearn")
+
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Triase ML runner (modular).")
 

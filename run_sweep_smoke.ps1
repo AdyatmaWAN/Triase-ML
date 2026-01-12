@@ -10,14 +10,13 @@ Write-Host "Using Python:" $PYTHON
 
 $EXCEL   = "Triase_cleaned.xlsx"
 $OUTROOT = "outputs\sweep_smoke"
-$NSPLITS = 3     # LIGHT: 3-fold dulu untuk cek semua jalan
+$NSPLITS = 3     
 
 $TASKS = @("diagnosis")
 $SELECTORS = @("manual", "none","xgb_gain","rf_importance","lgbm_importance","lasso_coef","mutual_info","chi2","rfe_rf","sfs_rf")
 $ELIMMODES = @("mean")
 $KLIST = @("0.3")
 
-# pakai semua model (pastikan registry sudah support "all"; kalau belum, ganti ke list explicit)
 $MODELS = "all"
 
 foreach ($task in $TASKS) {
