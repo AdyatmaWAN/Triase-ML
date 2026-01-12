@@ -45,7 +45,6 @@ foreach ($task in $TASKS) {
             --excel $EXCEL `
             --task $task `
             --models $m `
-            --primary_model $m `
             --feature_method $sel `
             --top_n $TOPN `
             --cv stratified_kfold `

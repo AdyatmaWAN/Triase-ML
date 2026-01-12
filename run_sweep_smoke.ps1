@@ -13,7 +13,7 @@ $OUTROOT = "outputs\sweep_smoke"
 $NSPLITS = 3     # LIGHT: 3-fold dulu untuk cek semua jalan
 
 $TASKS = @("diagnosis")
-$SELECTORS = @("none","xgb_gain","rf_importance","lgbm_importance","lasso_coef","mutual_info","chi2","rfe_rf","sfs_rf","manual")
+$SELECTORS = @("manual", "none","xgb_gain","rf_importance","lgbm_importance","lasso_coef","mutual_info","chi2","rfe_rf","sfs_rf")
 $ELIMMODES = @("mean")
 $KLIST = @("0.3")
 

@@ -85,7 +85,6 @@ def run_experiment(cfg: ExperimentConfig) -> Dict[str, object]:
     y_enc, le, class_names = _encode_target(y)
 
     models = build_models(cfg.models, seed=cfg.data.random_seed)
-    primary_model_name = cfg.primary_model_for_explanations or cfg.models[0]
 
     results_all: Dict[str, object] = {"task": cfg.task, "models": {}}
 

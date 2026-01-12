@@ -47,11 +47,6 @@ def parse_args() -> argparse.Namespace:
         default="rf,xgb,lgbm",
         help="Comma-separated model names. Example: rf,logreg,svm_rbf",
     )
-    p.add_argument(
-        "--primary_model",
-        default=None,
-        help="Model to use for SHAP (defaults to first model in --models).",
-    )
 
     # feature selection
     p.add_argument(
@@ -132,7 +127,6 @@ def main() -> None:
         ),
         task=args.task,
         models=model_list,
-        primary_model_for_explanations=args.primary_model,
     )
 
     res = run_experiment(cfg)
