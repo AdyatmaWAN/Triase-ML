@@ -25,7 +25,7 @@ def save_shap_beeswarm(
     X_explain: pd.DataFrame,
     out_path: str,
     agg: str = "median",
-    max_display: int = 20,
+    max_display: int = 10,
 ) -> None:
     """Create and save SHAP beeswarm plot.
 
@@ -70,3 +70,65 @@ def save_shap_beeswarm(
     plt.tight_layout()
     plt.savefig(out_path, dpi=200, bbox_inches="tight")
     plt.close()
+
+def save_shap_global_bar(
+        model,
+        X_background,
+        X_explain,
+        out_path,
+        agg: str = "median",
+        max_display: int = 10,
+):
+    from pathlib import Path
+    import numpy as np
+    import shap
+    import matplotlib.pyplot as plt
+
+    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+
+    # Pastikan input DataFrame (untuk nama fitur dan kompatibilitas plotting)
+    if not isinstance(X_background, pd.DataFrame):
+        X_background = pd.DataFrame(X_background)
+    if not isinstance(X_explain, pd.DataFrame):
+        X_explain = pd.DataFrame(X_explain, columns=X_background.columns)
+
+    # --- Wrapper: banyak estimator sklearn TIDAK callable untuk shap.Explainer(model, ...)
+    if callable(model):
+        f = model
+    else:
+        if hasattr(model, "predict_proba"):
+            f = lambda X: model.predict_proba(X)  # noqa: E731
+        else:
+            f = lambda X: model.predict(X)  # noqa: E731
+
+    # Gunakan background masker berbasis data (lebih umum dan stabil)
+    explainer = shap.Explainer(f, X_background)
+    shap_values = explainer(X_explain)
+
+    # --- Normalisasi bentuk output
+    values = shap_values.values
+
+    # Kasus multiclass/proba: (n_samples, n_features, n_classes) -> (n_samples, n_features)
+    if values.ndim == 3:
+        values_2d = np.mean(np.abs(values), axis=2)
+    # Kadang jadi (n_samples, n_features) sudah OK
+    elif values.ndim == 2:
+        values_2d = values
+    else:
+        # fallback keras: paksa flatten ke 2D bila memungkinkan
+        values_2d = np.asarray(values).reshape(values.shape[0], -1)
+
+    # --- Plot yang robust: kirim array 2D + DataFrame
+    plt.figure(figsize=(10, 6))
+    shap.summary_plot(
+        values_2d,
+        X_explain,
+        plot_type="bar",
+        max_display=max_display,
+        show=False,
+    )
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=300, bbox_inches="tight")
+    plt.close()
+
+

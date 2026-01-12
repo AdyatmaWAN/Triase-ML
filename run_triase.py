@@ -14,6 +14,17 @@ from triase_ml.configs.schema import (
 )
 from triase_ml.training.runner import run_experiment
 
+import numpy as np
+
+def _json_default(o):
+    if isinstance(o, np.ndarray):
+        return o.tolist()
+    if isinstance(o, (np.integer,)):
+        return int(o)
+    if isinstance(o, (np.floating,)):
+        return float(o)
+    return str(o)
+
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Triase ML runner (modular).")
@@ -125,7 +136,7 @@ def main() -> None:
     )
 
     res = run_experiment(cfg)
-    print(json.dumps(res, indent=2))
+    print(json.dumps(res, indent=2, default=_json_default))
 
 
 if __name__ == "__main__":

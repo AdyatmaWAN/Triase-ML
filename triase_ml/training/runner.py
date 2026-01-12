@@ -340,57 +340,83 @@ def run_experiment(cfg: ExperimentConfig) -> Dict[str, object]:
     except Exception:
         pass
 
-    # ----------------------------
-    # SHAP explanations for primary model on first split
-    # ----------------------------
     try:
-        model_name = primary_model_name
-        model = build_models([model_name], seed=cfg.data.random_seed)[model_name]
+        from ..viz.shap_viz import save_shap_global_bar  # lazy import
 
+        # gunakan split pertama agar biaya SHAP tidak dikali 10-fold
         tr_idx, te_idx = splits[0]
-        X_tr = X.iloc[tr_idx].copy()
-        X_te = X.iloc[te_idx].copy()
-        y_tr = y_enc[tr_idx]
 
-        fs = select_features(
-            method=cfg.preprocess.feature_method,
-            X_train=X_tr,
-            y_train=pd.Series(y_tr),
-            top_n=cfg.preprocess.top_n_features,
-            random_seed=cfg.data.random_seed,
-        )
-        sel = fs.selected_features
-        X_tr = X_tr[sel]
-        X_te = X_te[sel]
+        # Siapkan data sekali (feature selection + preprocessing) per model
+        # Catatan: karena Anda menerapkan feature selection per fold di training,
+        # untuk SHAP kita gunakan versi "single fold" berbasis tr_idx agar konsisten.
 
-        if cfg.preprocess.elimination_enabled:
-            X_tr_elim, y_tr_s = eliminate_by_centroid_distance(
-                X_tr, pd.Series(y_tr), k=cfg.preprocess.elimination_k, agg=cfg.preprocess.elimination_agg
-            )
-            X_tr = X_tr_elim
-            y_tr = y_tr_s.values
+        # Batasi jumlah sampel yang dijelaskan agar cepat
+        MAX_EXPLAIN = 200
 
-        scaler = StandardScaler()
-        X_tr_s = scaler.fit_transform(X_tr.values)
-        X_te_s = scaler.transform(X_te.values)
+        for model_name in models.keys():
+            try:
+                # Build fresh model instance (jangan pakai object yg sudah terfit/termutasi)
+                m = build_models([model_name], seed=cfg.data.random_seed)[model_name]
 
-        model.fit(X_tr_s, y_tr)
+                X_tr = X.iloc[tr_idx].copy()
+                X_te = X.iloc[te_idx].copy()
+                y_tr = y_enc[tr_idx]
 
-        n_explain = min(200, X_te.shape[0])
-        X_explain = pd.DataFrame(X_te_s[:n_explain], columns=sel)
-        X_bg = pd.DataFrame(X_tr_s, columns=sel)
+                # Feature selection pada training split
+                fs = select_features(
+                    method=cfg.preprocess.feature_method,
+                    X_train=X_tr,
+                    y_train=pd.Series(y_tr),
+                    top_n=cfg.preprocess.top_n_features,
+                    random_seed=cfg.data.random_seed,
+                )
+                sel = fs.selected_features
+                X_tr = X_tr[sel]
+                X_te = X_te[sel]
 
-        shap_path = Path(out_dir) / "figures" / model_name / "shap_beeswarm.png"
-        save_shap_beeswarm(
-            model=model,
-            X_background=X_bg,
-            X_explain=X_explain,
-            out_path=str(shap_path),
-            agg=cfg.preprocess.elimination_agg,
-            max_display=min(30, len(sel)),
-        )
-    except Exception:
-        pass
+                # Elimination pada train split (jika enabled)
+                if cfg.preprocess.elimination_enabled:
+                    X_tr, y_tr_s = eliminate_by_centroid_distance(
+                        X_tr,
+                        pd.Series(y_tr),
+                        k=cfg.preprocess.elimination_k,
+                        agg=cfg.preprocess.elimination_agg,
+                    )
+                    y_tr = y_tr_s.values
+
+                # Scaling
+                scaler = StandardScaler()
+                X_tr_s = scaler.fit_transform(X_tr.values)
+                X_te_s = scaler.transform(X_te.values)
+
+                # Fit model
+                m.fit(X_tr_s, y_tr)
+
+                # Prepare explain set
+                n_explain = min(MAX_EXPLAIN, X_te_s.shape[0])
+                X_explain = pd.DataFrame(X_te_s[:n_explain], columns=sel)
+                X_bg = pd.DataFrame(X_tr_s, columns=sel)
+
+                shap_path = Path(out_dir) / "figures" / model_name / "shap_beeswarm.png"
+                shap_path.parent.mkdir(parents=True, exist_ok=True)
+
+                print(f"[SHAP][{model_name}] saving to: {shap_path}")
+                save_shap_global_bar(
+                    model=m,
+                    X_background=X_bg,
+                    X_explain=X_explain,
+                    out_path=str(shap_path),
+                    agg=cfg.preprocess.elimination_agg,
+                    max_display=min(30, len(sel)),
+                )
+
+            except Exception as e:
+                print(f"[SHAP][{model_name}] skipped: {type(e).__name__}: {e}")
+
+    except Exception as e:
+        print(f"[SHAP] global skipped: {type(e).__name__}: {e}")
+
+
 
     with open(Path(out_dir) / "results_summary.json", "w", encoding="utf-8") as f:
         json.dump(results_all, f, indent=2, default=lambda o: None)
