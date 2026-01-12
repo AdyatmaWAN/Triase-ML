@@ -170,24 +170,29 @@ def run_experiment(cfg: ExperimentConfig) -> Dict[str, object]:
             X_te = X_te[selected]
 
             # optional elimination on training fold only
+            # optional elimination on training fold only
             if cfg.preprocess.elimination_enabled:
                 X_tr_df = pd.DataFrame(X_tr, columns=selected)
                 y_tr_s = pd.Series(y_tr)
                 X_tr_df, y_tr_s = eliminate_by_centroid_distance(
                     X_tr_df, y_tr_s, k=tuned_k, agg=cfg.preprocess.elimination_agg
                 )
-                X_tr_np = X_tr_df.values
-                y_tr_np = y_tr_s.values
-                X_te_np = X_te.values
+                X_tr_final = X_tr_df
+                y_tr_final = y_tr_s.values
             else:
-                X_tr_np = X_tr.values
-                y_tr_np = y_tr
-                X_te_np = X_te.values
+                X_tr_final = X_tr
+                y_tr_final = y_tr
+            
+            X_te_final = X_te
 
             # scale (fits on train fold only)
             scaler = StandardScaler()
-            X_tr_np = scaler.fit_transform(X_tr_np)
-            X_te_np = scaler.transform(X_te_np)
+            X_tr_scaled_np = scaler.fit_transform(X_tr_final)
+            X_te_scaled_np = scaler.transform(X_te_final)
+
+            # Wrap back to DataFrame
+            X_tr_final = pd.DataFrame(X_tr_scaled_np, columns=X_tr_final.columns, index=X_tr_final.index)
+            X_te_final = pd.DataFrame(X_te_scaled_np, columns=X_te_final.columns, index=X_te_final.index)
 
             # task pipeline special-case
             if cfg.task == "pipeline_diag_then_handling":
@@ -195,9 +200,9 @@ def run_experiment(cfg: ExperimentConfig) -> Dict[str, object]:
                 stage1_model = build_models([model_name], seed=cfg.data.random_seed)[model_name]
                 # FIX: apply tuned parameters from the main loop model
                 stage1_model.set_params(**model.get_params())
-                stage1_model.fit(X_tr_np, y_tr_np)
-                yhat_tr = stage1_model.predict(X_tr_np)
-                yhat_te = stage1_model.predict(X_te_np)
+                stage1_model.fit(X_tr_final, y_tr_final)
+                yhat_tr = stage1_model.predict(X_tr_final)
+                yhat_te = stage1_model.predict(X_te_final)
 
                 # stage2: build X2 from X_stage2 using indices tr/te and overwrite diag one-hots.
                 X2_tr_full = X_stage2.iloc[tr_idx].copy()
@@ -236,22 +241,26 @@ def run_experiment(cfg: ExperimentConfig) -> Dict[str, object]:
                     X2_tr_df, y2_tr_s = eliminate_by_centroid_distance(
                         X2_tr, pd.Series(y2_tr), k=tuned_k, agg=cfg.preprocess.elimination_agg
                     )
-                    X2_tr_np = X2_tr_df.values
-                    y2_tr_np = y2_tr_s.values
-                    X2_te_np = X2_te.values
+                    X2_tr_final = X2_tr_df
+                    y2_tr_final = y2_tr_s.values
                 else:
-                    X2_tr_np = X2_tr.values
-                    y2_tr_np = y2_tr
-                    X2_te_np = X2_te.values
+                    X2_tr_final = X2_tr
+                    y2_tr_final = y2_tr
+                
+                X2_te_final = X2_te
 
                 scaler2 = StandardScaler()
-                X2_tr_np = scaler2.fit_transform(X2_tr_np)
-                X2_te_np = scaler2.transform(X2_te_np)
+                X2_tr_scaled_np = scaler2.fit_transform(X2_tr_final)
+                X2_te_scaled_np = scaler2.transform(X2_te_final)
+                
+                # Wrap back to DataFrame
+                X2_tr_final = pd.DataFrame(X2_tr_scaled_np, columns=X2_tr_final.columns, index=X2_tr_final.index)
+                X2_te_final = pd.DataFrame(X2_te_scaled_np, columns=X2_te_final.columns, index=X2_te_final.index)
 
                 stage2_model = build_models([model_name], seed=cfg.data.random_seed)[model_name]
                 # FIX: apply tuned parameters here as well
                 stage2_model.set_params(**model.get_params())
-                y_pred, y_proba = _fit_predict_model(stage2_model, X2_tr_np, y2_tr_np, X2_te_np)
+                y_pred, y_proba = _fit_predict_model(stage2_model, X2_tr_final, y2_tr_final, X2_te_final)
 
                 fr = compute_metrics(y2_te, y_pred, y_proba=y_proba)
                 fold_results[fold_i] = fr
@@ -269,7 +278,7 @@ def run_experiment(cfg: ExperimentConfig) -> Dict[str, object]:
                         Path(out_dir) / f"model_{model_name}_pipeline.joblib",
                         )
             else:
-                y_pred, y_proba = _fit_predict_model(model, X_tr_np, y_tr_np, X_te_np)
+                y_pred, y_proba = _fit_predict_model(model, X_tr_final, y_tr_final, X_te_final)
 
                 fr = compute_metrics(y_te, y_pred, y_proba=y_proba)
                 fold_results[fold_i] = fr
@@ -400,16 +409,20 @@ def run_experiment(cfg: ExperimentConfig) -> Dict[str, object]:
 
                 # Scaling
                 scaler = StandardScaler()
-                X_tr_s = scaler.fit_transform(X_tr.values)
-                X_te_s = scaler.transform(X_te.values)
+                X_tr_scaled_np = scaler.fit_transform(X_tr)
+                X_te_scaled_np = scaler.transform(X_te)
+                
+                # Wrap back to DataFrame
+                X_tr_s = pd.DataFrame(X_tr_scaled_np, columns=X_tr.columns, index=X_tr.index)
+                X_te_s = pd.DataFrame(X_te_scaled_np, columns=X_te.columns, index=X_te.index)
 
                 # Fit model
                 m.fit(X_tr_s, y_tr)
 
                 # Prepare explain set
                 n_explain = min(MAX_EXPLAIN, X_te_s.shape[0])
-                X_explain = pd.DataFrame(X_te_s[:n_explain], columns=sel)
-                X_bg = pd.DataFrame(X_tr_s, columns=sel)
+                X_explain = X_te_s.iloc[:n_explain].copy()
+                X_bg = X_tr_s.copy()
 
                 shap_path = Path(out_dir) / "figures" / model_name / "shap_beeswarm.png"
                 shap_path.parent.mkdir(parents=True, exist_ok=True)
