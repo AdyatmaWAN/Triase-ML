@@ -1,3 +1,9 @@
+param(
+    [string]$PYTHON = "python"
+)
+
+Write-Host "Using Python:" $PYTHON
+
 $EXCEL   = "Triase_cleaned.xlsx"
 $OUTROOT = "outputs\sweep_all"
 $NSPLITS = 10
@@ -32,10 +38,10 @@ foreach ($task in $TASKS) {
 
       if ($emode -eq "none") {
         Write-Host "RUN: task=$task sel=$sel elim=none"
-        python @baseArgs
+        & $PYTHON @baseArgs
       } else {
         Write-Host "RUN: task=$task sel=$sel elim=$emode"
-        python @baseArgs --eliminate --agg $emode
+        & $PYTHON @baseArgs --eliminate --agg $emode
       }
     }
   }

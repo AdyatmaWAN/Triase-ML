@@ -8,6 +8,8 @@ import pandas as pd
 
 # SHAP can be heavy; import lazily
 import shap
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 

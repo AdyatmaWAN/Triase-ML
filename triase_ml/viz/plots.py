@@ -5,6 +5,8 @@ from typing import Optional, Sequence
 
 import numpy as np
 import pandas as pd
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from sklearn.metrics import ConfusionMatrixDisplay, RocCurveDisplay
 from sklearn.preprocessing import label_binarize

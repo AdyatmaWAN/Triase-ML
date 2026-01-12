@@ -3,10 +3,11 @@ from __future__ import annotations
 import json
 from dataclasses import asdict
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 
 import numpy as np
 import pandas as pd
+from joblib import dump
 from sklearn.model_selection import StratifiedKFold, train_test_split
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 
@@ -14,13 +15,11 @@ from ..configs.schema import ExperimentConfig
 from ..data.io import load_triase_excel
 from ..features.selectors import select_features
 from ..models.registry import build_models
-from .elimination import eliminate_by_centroid_distance
-from .metrics import compute_metrics, aggregate_fold_results
-from .tuning import tune_model_and_elimination
 from ..viz.plots import save_confusion_matrix, save_feature_importance_bar, save_roc_auc
 from ..viz.shap_viz import save_shap_beeswarm
-
-from joblib import dump
+from .elimination import eliminate_by_centroid_distance
+from .metrics import aggregate_fold_results, compute_metrics
+from .tuning import tune_model_and_elimination
 
 
 def _ensure_dir(p: str) -> None:
@@ -55,8 +54,7 @@ def _get_task_data(cfg: ExperimentConfig):
 
     if task == "pipeline_diag_then_handling":
         # stage1: diagnosis using no_diag
-        # stage2: handling uses with_diagnosis (but we will replace the diagnosis one-hot columns
-        # based on predicted stage1, keeping other features from X_no_diagnosis)
+        # stage2: handling uses with_diagnosis (we overwrite diagnosis one-hot columns using predicted stage1)
         return data.X_no_diagnosis, data.y_diagnosis, data.X_with_diagnosis, data.y_handling
 
     raise ValueError(f"Unknown task: {task}")
@@ -65,6 +63,7 @@ def _get_task_data(cfg: ExperimentConfig):
 def _fit_predict_model(model, X_train, y_train, X_test):
     model.fit(X_train, y_train)
     y_pred = model.predict(X_test)
+
     y_proba = None
     if hasattr(model, "predict_proba"):
         try:
@@ -83,7 +82,6 @@ def run_experiment(cfg: ExperimentConfig) -> Dict[str, object]:
         json.dump(asdict(cfg), f, indent=2)
 
     X, y, X_stage2, y_stage2 = _get_task_data(cfg)
-
     y_enc, le, class_names = _encode_target(y)
 
     models = build_models(cfg.models, seed=cfg.data.random_seed)
@@ -91,7 +89,9 @@ def run_experiment(cfg: ExperimentConfig) -> Dict[str, object]:
 
     results_all: Dict[str, object] = {"task": cfg.task, "models": {}}
 
+    # ----------------------------
     # CV splits
+    # ----------------------------
     if cfg.cv.cv_type == "single_split":
         idx = np.arange(len(y_enc))
         train_idx, test_idx = train_test_split(
@@ -109,17 +109,21 @@ def run_experiment(cfg: ExperimentConfig) -> Dict[str, object]:
         )
         splits = list(skf.split(X, y_enc))
 
-        for model_name, model in models.items():
+    # ----------------------------
+    # Train per model
+    # ----------------------------
+    for model_name, model in models.items():
         # Optional joint tuning of elimination k and model hyperparameters
         tuned_k = cfg.preprocess.elimination_k
         tuned_params = {}
+
         if cfg.tuning.enabled:
             grid = cfg.tuning.model_param_grid.get(model_name, {})
             tune_res = tune_model_and_elimination(
                 base_model=model,
                 X=X,
                 y_enc=y_enc,
-                splits=splits if len(splits) > 1 else splits,  # works for both
+                splits=splits,
                 feature_method=cfg.preprocess.feature_method,
                 top_n_features=cfg.preprocess.top_n_features,
                 elimination_enabled=cfg.preprocess.elimination_enabled,
@@ -131,7 +135,7 @@ def run_experiment(cfg: ExperimentConfig) -> Dict[str, object]:
             )
             tuned_k = tune_res.get("best_k", tuned_k)
             tuned_params = tune_res.get("best_params", {}) or {}
-            # persist tuning report
+
             tune_path = Path(out_dir) / "tuning" / f"{model_name}.json"
             tune_path.parent.mkdir(parents=True, exist_ok=True)
             with open(tune_path, "w", encoding="utf-8") as f:
@@ -142,10 +146,11 @@ def run_experiment(cfg: ExperimentConfig) -> Dict[str, object]:
                 model.set_params(**tuned_params)
             except Exception:
                 pass
+
         fold_results = {}
-        y_true_all = []
-        y_pred_all = []
-        y_proba_all = []
+        y_true_all: List[int] = []
+        y_pred_all: List[int] = []
+        y_proba_all: List[np.ndarray] = []
 
         for fold_i, (tr_idx, te_idx) in enumerate(splits):
             X_tr = X.iloc[tr_idx].copy()
@@ -172,37 +177,34 @@ def run_experiment(cfg: ExperimentConfig) -> Dict[str, object]:
                 X_tr_df, y_tr_s = eliminate_by_centroid_distance(
                     X_tr_df, y_tr_s, k=tuned_k, agg=cfg.preprocess.elimination_agg
                 )
-                X_tr = X_tr_df.values
-                y_tr = y_tr_s.values
+                X_tr_np = X_tr_df.values
+                y_tr_np = y_tr_s.values
+                X_te_np = X_te.values
             else:
-                X_tr = X_tr.values
-                X_te = X_te.values
+                X_tr_np = X_tr.values
+                y_tr_np = y_tr
+                X_te_np = X_te.values
 
             # scale (fits on train fold only)
             scaler = StandardScaler()
-            X_tr = scaler.fit_transform(X_tr)
-            X_te = scaler.transform(X_te)
+            X_tr_np = scaler.fit_transform(X_tr_np)
+            X_te_np = scaler.transform(X_te_np)
 
             # task pipeline special-case
             if cfg.task == "pipeline_diag_then_handling":
                 # stage 1: diagnosis model predicts diagnosis for train/test, then stage 2 predicts handling
-                # We train stage1 model on (X_tr, y_tr) and predict for both tr and te.
                 stage1_model = build_models([model_name], seed=cfg.data.random_seed)[model_name]
-                stage1_model.fit(X_tr, y_tr)
-                yhat_tr = stage1_model.predict(X_tr)
-                yhat_te = stage1_model.predict(X_te)
+                stage1_model.fit(X_tr_np, y_tr_np)
+                yhat_tr = stage1_model.predict(X_tr_np)
+                yhat_te = stage1_model.predict(X_te_np)
 
                 # stage2: build X2 from X_stage2 using indices tr/te and overwrite diag one-hots.
-                # Because X_stage2 already has diagnosis one-hot columns, we re-create diagnosis
-                # dummies from predicted diagnosis labels (le.classes_) and align to columns.
                 X2_tr_full = X_stage2.iloc[tr_idx].copy()
                 X2_te_full = X_stage2.iloc[te_idx].copy()
 
-                # identify diagnosis one-hot columns
                 diag_prefix = "Diagnosa Penyakit jantung pasien  (text) _"
                 diag_cols = [c for c in X2_tr_full.columns if c.startswith(diag_prefix)]
 
-                # wipe and set predicted
                 for df_part, yhat in [(X2_tr_full, yhat_tr), (X2_te_full, yhat_te)]:
                     if diag_cols:
                         df_part.loc[:, diag_cols] = 0
@@ -211,13 +213,13 @@ def run_experiment(cfg: ExperimentConfig) -> Dict[str, object]:
                             if col in df_part.columns:
                                 df_part.loc[:, col] = (yhat == i).astype(int)
 
-                # build y2 target
-                y2_enc, le2, class_names2 = _encode_target(pd.concat([y_stage2.iloc[tr_idx], y_stage2.iloc[te_idx]], axis=0))
-                # NOTE: for handling, labels are ints; we keep consistent encoder by fitting on whole.
+                # encode handling (stage2 target) consistently on the whole fold union
+                y2_enc_all, le2, class_names2 = _encode_target(
+                    pd.concat([y_stage2.iloc[tr_idx], y_stage2.iloc[te_idx]], axis=0)
+                )
                 y2_tr = le2.transform(y_stage2.iloc[tr_idx].astype(str))
                 y2_te = le2.transform(y_stage2.iloc[te_idx].astype(str))
 
-                # feature selection for stage2 is applied on train fold (X2_tr_full)
                 fs2 = select_features(
                     method=cfg.preprocess.feature_method,
                     X_train=X2_tr_full,
@@ -233,37 +235,42 @@ def run_experiment(cfg: ExperimentConfig) -> Dict[str, object]:
                     X2_tr_df, y2_tr_s = eliminate_by_centroid_distance(
                         X2_tr, pd.Series(y2_tr), k=tuned_k, agg=cfg.preprocess.elimination_agg
                     )
-                    X2_tr = X2_tr_df.values
-                    y2_tr = y2_tr_s.values
+                    X2_tr_np = X2_tr_df.values
+                    y2_tr_np = y2_tr_s.values
+                    X2_te_np = X2_te.values
                 else:
-                    X2_tr = X2_tr.values
-                    X2_te = X2_te.values
+                    X2_tr_np = X2_tr.values
+                    y2_tr_np = y2_tr
+                    X2_te_np = X2_te.values
 
                 scaler2 = StandardScaler()
-                X2_tr = scaler2.fit_transform(X2_tr)
-                X2_te = scaler2.transform(X2_te)
+                X2_tr_np = scaler2.fit_transform(X2_tr_np)
+                X2_te_np = scaler2.transform(X2_te_np)
 
                 stage2_model = build_models([model_name], seed=cfg.data.random_seed)[model_name]
-                y_pred, y_proba = _fit_predict_model(stage2_model, X2_tr, y2_tr, X2_te)
+                y_pred, y_proba = _fit_predict_model(stage2_model, X2_tr_np, y2_tr_np, X2_te_np)
 
                 fr = compute_metrics(y2_te, y_pred, y_proba=y_proba)
                 fold_results[fold_i] = fr
+
                 y_true_all.extend(list(y2_te))
                 y_pred_all.extend(list(y_pred))
                 if y_proba is not None:
                     y_proba_all.append(y_proba)
 
-                # save models/scalers for fold if desired
-                if cfg.output.save_models and fold_i == 0:
-                    dump({"stage1": stage1_model, "scaler1": scaler, "stage2": stage2_model, "scaler2": scaler2},
-                         Path(out_dir) / f"model_{model_name}_pipeline.joblib")
-
-                # for plots, class names are stage2
                 class_names_plot = class_names2
+
+                if cfg.output.save_models and fold_i == 0:
+                    dump(
+                        {"stage1": stage1_model, "scaler1": scaler, "stage2": stage2_model, "scaler2": scaler2},
+                        Path(out_dir) / f"model_{model_name}_pipeline.joblib",
+                        )
             else:
-                y_pred, y_proba = _fit_predict_model(model, X_tr, y_tr, X_te)
+                y_pred, y_proba = _fit_predict_model(model, X_tr_np, y_tr_np, X_te_np)
+
                 fr = compute_metrics(y_te, y_pred, y_proba=y_proba)
                 fold_results[fold_i] = fr
+
                 y_true_all.extend(list(y_te))
                 y_pred_all.extend(list(y_pred))
                 if y_proba is not None:
@@ -272,8 +279,10 @@ def run_experiment(cfg: ExperimentConfig) -> Dict[str, object]:
                 class_names_plot = class_names
 
                 if cfg.output.save_models and fold_i == 0:
-                    dump({"model": model, "scaler": scaler, "selected_features": selected},
-                         Path(out_dir) / f"model_{model_name}.joblib")
+                    dump(
+                        {"model": model, "scaler": scaler, "selected_features": selected},
+                        Path(out_dir) / f"model_{model_name}.joblib",
+                        )
 
         agg = aggregate_fold_results(fold_results)
         results_all["models"][model_name] = agg
@@ -306,8 +315,9 @@ def run_experiment(cfg: ExperimentConfig) -> Dict[str, object]:
             dfp = pd.DataFrame({"y_true": y_true_all, "y_pred": y_pred_all})
             dfp.to_csv(pred_path, index=False)
 
-    # Feature importance figure (based on feature selection result or model built-in importance)
-    # We compute once on a single split for interpretability.
+    # ----------------------------
+    # Feature importance figure (one split)
+    # ----------------------------
     try:
         tr_idx, te_idx = splits[0]
         X_tr0 = X.iloc[tr_idx].copy()
@@ -330,15 +340,18 @@ def run_experiment(cfg: ExperimentConfig) -> Dict[str, object]:
     except Exception:
         pass
 
+    # ----------------------------
     # SHAP explanations for primary model on first split
+    # ----------------------------
     try:
         model_name = primary_model_name
         model = build_models([model_name], seed=cfg.data.random_seed)[model_name]
+
         tr_idx, te_idx = splits[0]
         X_tr = X.iloc[tr_idx].copy()
         X_te = X.iloc[te_idx].copy()
         y_tr = y_enc[tr_idx]
-        # feature selection
+
         fs = select_features(
             method=cfg.preprocess.feature_method,
             X_train=X_tr,
@@ -350,11 +363,11 @@ def run_experiment(cfg: ExperimentConfig) -> Dict[str, object]:
         X_tr = X_tr[sel]
         X_te = X_te[sel]
 
-        # elimination on train only
         if cfg.preprocess.elimination_enabled:
-            X_tr, y_tr_s = eliminate_by_centroid_distance(
+            X_tr_elim, y_tr_s = eliminate_by_centroid_distance(
                 X_tr, pd.Series(y_tr), k=cfg.preprocess.elimination_k, agg=cfg.preprocess.elimination_agg
             )
+            X_tr = X_tr_elim
             y_tr = y_tr_s.values
 
         scaler = StandardScaler()
@@ -363,10 +376,8 @@ def run_experiment(cfg: ExperimentConfig) -> Dict[str, object]:
 
         model.fit(X_tr_s, y_tr)
 
-        # Explain on a subset for speed
         n_explain = min(200, X_te.shape[0])
         X_explain = pd.DataFrame(X_te_s[:n_explain], columns=sel)
-
         X_bg = pd.DataFrame(X_tr_s, columns=sel)
 
         shap_path = Path(out_dir) / "figures" / model_name / "shap_beeswarm.png"
