@@ -12,3 +12,7 @@ outputs/*
 
 # Ignore all Excel files
 *.xlsx
+
+.idea/*
+
+*.iml
